@@ -251,18 +251,33 @@ select{min-width:170px;cursor:pointer;}
 .show-more-row{text-align:center;padding:10px;}
 
 /* ---------- Sessions tab ---------- */
-.active-banner{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
-  background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;
-  padding:12px 16px;margin-bottom:16px;
+.add-session-wrap{position:relative;}
+.btn-add-session{font-size:11px;padding:7px 12px;}
+.add-session-menu{
+  position:absolute;top:100%;right:0;margin-top:6px;min-width:230px;max-width:300px;
+  background:var(--panel-raised);border:1px solid var(--border);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:30;display:none;overflow:hidden;max-height:280px;overflow-y:auto;
 }
-.active-banner .ab-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--accent);text-transform:uppercase;}
-.active-banner .ab-title{font-weight:700;font-size:15px;}
+.add-session-menu.open{display:block;}
+.asm-item{
+  padding:11px 14px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border-soft);
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+}
+.asm-item:last-child{border-bottom:none;}
+.asm-item:hover{background:var(--accent-soft);}
+.asm-done{color:var(--text-dim);cursor:default;}
+.asm-done:hover{background:transparent;}
+.asm-check{font-family:var(--mono);font-size:11px;color:var(--ok);flex-shrink:0;}
+.asm-empty{padding:12px 14px;font-family:var(--mono);font-size:11.5px;color:var(--text-faint);}
+.sc-del{
+  background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;
+  padding:2px 6px;border-radius:4px;line-height:1;flex-shrink:0;transition:color .15s, background .15s;
+}
+.sc-del:hover{color:var(--danger);background:var(--danger-soft);}
 .session-card{
   background:var(--panel);border:1px solid var(--border);border-radius:8px;
   padding:14px 16px;margin-bottom:10px;
 }
-.session-card.is-active{border-color:var(--accent);}
 .session-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;cursor:pointer;}
 .session-title{font-weight:700;font-size:15px;}
 .session-meta{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;}
@@ -277,6 +292,7 @@ select{min-width:170px;cursor:pointer;}
 }
 .session-code-row:hover{border-color:var(--accent);}
 .session-code-row .sc-time{font-family:var(--mono);font-size:10.5px;color:var(--text-faint);margin-left:auto;}
+.session-code-row .sc-del{margin-left:4px;}
 .session-empty{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);padding:4px 0;}
 
 /* ---------- History tab ---------- */
@@ -346,14 +362,14 @@ select{min-width:170px;cursor:pointer;}
   </div>
 
   <div class="tabs">
-    <button class="tab-btn active" data-tab="search">SEARCH</button>
+    <button class="tab-btn active" data-tab="sessions">SESSIONS</button>
+    <button class="tab-btn" data-tab="search">SEARCH</button>
     <button class="tab-btn" data-tab="browse">BROWSE BY ECU</button>
-    <button class="tab-btn" data-tab="sessions">SESSIONS</button>
     <button class="tab-btn" data-tab="history">HISTORY</button>
   </div>
 
   <!-- SEARCH TAB -->
-  <div class="tab-panel active" id="panel-search">
+  <div class="tab-panel" id="panel-search">
     <div class="search-card">
       <div class="search-row">
         <div class="field">
@@ -390,7 +406,7 @@ select{min-width:170px;cursor:pointer;}
   </div>
 
   <!-- SESSIONS TAB -->
-  <div class="tab-panel" id="panel-sessions">
+  <div class="tab-panel active" id="panel-sessions">
     <div class="search-card">
       <div class="search-row">
         <div class="field grow">
@@ -399,12 +415,11 @@ select{min-width:170px;cursor:pointer;}
         </div>
         <div class="field">
           <label>&nbsp;</label>
-          <button class="btn" id="createSessionBtn">START SESSION</button>
+          <button class="btn" id="createSessionBtn">CREATE SESSION</button>
         </div>
       </div>
-      <div class="hint" id="sessionHint">Starting a session records the date, time, and GPS position (you'll be asked for location permission). Codes you look up while a session is active are logged to it automatically.</div>
+      <div class="hint" id="sessionHint">Creating a session records the date, time, and GPS position (you'll be asked for location permission). To add a fault to a session, look up the code and use its "Add to Session" button.</div>
     </div>
-    <div id="activeSessionBanner"></div>
     <div id="sessionsList"></div>
   </div>
 
@@ -468,6 +483,7 @@ function boot(){
   setupBrowse();
   setupHistory();
   setupSessions();
+  renderSessions();
 
   document.getElementById('loadingScreen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -638,6 +654,10 @@ function buildDetailCardHTML(idx, uid){
     <div class="detail-card" id="card-${uid}" data-idx="${idx}">
       <div class="detail-head">
         <div><span class="detail-code">${escapeHtml(code)}</span><span class="detail-ecu">${escapeHtml(ecu)}</span></div>
+        <div class="add-session-wrap">
+          <button class="btn-outline btn-add-session" id="addSessionBtn-${uid}">+ ADD TO SESSION</button>
+          <div class="add-session-menu" id="addSessionMenu-${uid}"></div>
+        </div>
       </div>
       <div class="detail-body">
         <div class="section">
@@ -701,6 +721,36 @@ function wireDetailCard(idx, uid){
     e.target.textContent = (panel.classList.contains('open') ? '▾' : '▸') + ' ACTION IN SERVICE';
   });
 
+  const addBtn = document.getElementById(`addSessionBtn-${uid}`);
+  const addMenu = document.getElementById(`addSessionMenu-${uid}`);
+  addBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const open = addMenu.classList.contains('open');
+    document.querySelectorAll('.add-session-menu.open').forEach(m => m.classList.remove('open'));
+    if(open){ addMenu.classList.remove('open'); return; }
+    await loadSessions();
+    if(!sessionsCache.length){
+      addMenu.innerHTML = `<div class="asm-empty">No sessions yet. Create one in the Sessions tab first.</div>`;
+    }else{
+      addMenu.innerHTML = sessionsCache.map(s => {
+        const already = s.codes.some(c => c.code === code && c.ecu === ecu);
+        return `<div class="asm-item${already ? ' asm-done' : ''}" data-sid="${s.id}">
+          <span>${escapeHtml(s.title)}</span>
+          ${already ? '<span class="asm-check">✓ added</span>' : ''}
+        </div>`;
+      }).join('');
+    }
+    addMenu.classList.add('open');
+    addMenu.querySelectorAll('.asm-item').forEach(item => {
+      item.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        await addCodeToSession(item.dataset.sid, code, ecu);
+        addMenu.classList.remove('open');
+      });
+    });
+  });
+  document.addEventListener('click', () => addMenu.classList.remove('open'));
+
   const noteKey = 'note:' + ecu + ':' + code;
   const notesField = document.getElementById(`notesField-${uid}`);
   const notesStatus = document.getElementById(`notesStatus-${uid}`);
@@ -717,7 +767,6 @@ function wireDetailCard(idx, uid){
   });
 
   logHistory(code, ecu);
-  logToActiveSession(code, ecu);
 }
 
 function renderDetailCards(indices, queryLabel){
@@ -847,17 +896,14 @@ async function renderHistory(){
 
 /* ---------------- sessions ---------------- */
 let sessionsCache = null;
-let activeSessionId = null;
 
 async function loadSessions(){
   if(sessionsCache === null){
     sessionsCache = await storageGet('sessions', []);
-    activeSessionId = await storageGet('activeSession', null);
   }
 }
 async function saveSessions(){
   await storageSet('sessions', sessionsCache);
-  await storageSet('activeSession', activeSessionId);
 }
 
 function getGPS(){
@@ -885,7 +931,7 @@ async function createSession(){
   const btn = document.getElementById('createSessionBtn');
   btn.disabled = true; btn.textContent = 'GETTING GPS…';
   const gps = await getGPS();
-  btn.disabled = false; btn.textContent = 'START SESSION';
+  btn.disabled = false; btn.textContent = 'CREATE SESSION';
   const sess = {
     id: 's' + Date.now(),
     title: title,
@@ -894,30 +940,33 @@ async function createSession(){
     codes: []
   };
   sessionsCache.unshift(sess);
-  activeSessionId = sess.id;
   await saveSessions();
   titleInput.value = '';
-  showToast(gps ? 'Session started — GPS captured' : 'Session started — GPS unavailable');
+  showToast(gps ? 'Session created — GPS captured' : 'Session created — GPS unavailable');
   renderSessions();
 }
 
-async function logToActiveSession(code, ecu){
+async function addCodeToSession(sid, code, ecu){
   await loadSessions();
-  if(!activeSessionId) return;
-  const sess = sessionsCache.find(s => s.id === activeSessionId);
-  if(!sess) return;
-  /* avoid consecutive duplicates of the same code+ecu */
-  const last = sess.codes[sess.codes.length - 1];
-  if(last && last.code === code && last.ecu === ecu) return;
+  const sess = sessionsCache.find(s => s.id === sid);
+  if(!sess){ showToast('Session not found'); return; }
+  if(sess.codes.some(c => c.code === code && c.ecu === ecu)){
+    showToast('Already in "' + sess.title + '"');
+    return;
+  }
   sess.codes.push({code, ecu, ts: Date.now()});
   await saveSessions();
+  showToast('Added ' + code + ' to "' + sess.title + '"');
 }
 
-async function endActiveSession(){
-  activeSessionId = null;
+async function removeCodeFromSession(sid, code, ecu, ts){
+  await loadSessions();
+  const sess = sessionsCache.find(s => s.id === sid);
+  if(!sess) return;
+  sess.codes = sess.codes.filter(c => !(c.code === code && c.ecu === ecu && c.ts === ts));
   await saveSessions();
   renderSessions();
-  showToast('Session ended');
+  showToast('Removed ' + code + ' from session');
 }
 
 function gpsLabel(gps){
@@ -935,25 +984,14 @@ function fullStamp(ts){
 
 async function renderSessions(){
   await loadSessions();
-  const banner = document.getElementById('activeSessionBanner');
-  const active = sessionsCache.find(s => s.id === activeSessionId);
-  banner.innerHTML = active ? `
-    <div class="active-banner">
-      <div>
-        <div class="ab-label">● Active Session</div>
-        <div class="ab-title">${escapeHtml(active.title)}</div>
-      </div>
-      <button class="btn-ghost" id="endSessionBtn">End session</button>
-    </div>` : '';
-  if(active) document.getElementById('endSessionBtn').addEventListener('click', endActiveSession);
 
   const listDiv = document.getElementById('sessionsList');
   if(!sessionsCache.length){
-    listDiv.innerHTML = `<div class="empty-state">No sessions yet.<br>Start one above to track an issue.</div>`;
+    listDiv.innerHTML = `<div class="empty-state">No sessions yet.<br>Create one above to track an issue.</div>`;
     return;
   }
   listDiv.innerHTML = sessionsCache.map(s => `
-    <div class="session-card ${s.id === activeSessionId ? 'is-active' : ''}" data-sid="${s.id}">
+    <div class="session-card" data-sid="${s.id}">
       <div class="session-head" data-toggle="${s.id}">
         <div>
           <div class="session-title">${escapeHtml(s.title)}</div>
@@ -964,7 +1002,6 @@ async function renderSessions(){
           </div>
         </div>
         <div class="session-actions">
-          ${s.id !== activeSessionId ? `<button class="btn-ghost" data-resume="${s.id}">Resume</button>` : ''}
           <button class="btn-ghost btn-danger-ghost" data-del="${s.id}">Delete</button>
         </div>
       </div>
@@ -974,8 +1011,9 @@ async function renderSessions(){
             <span class="match-ecu-badge">${escapeHtml(c.ecu)}</span>
             <span class="cr-code">${escapeHtml(c.code)}</span>
             <span class="sc-time">${fullStamp(c.ts)}</span>
+            <button class="sc-del" data-rmsid="${s.id}" data-rmcode="${escapeHtml(c.code)}" data-rmecu="${escapeHtml(c.ecu)}" data-rmts="${c.ts}" title="Remove from session">✕</button>
           </div>`).join('')
-        : `<div class="session-empty">No codes logged in this session yet — look up a code while it's active.</div>`}
+        : `<div class="session-empty">No codes yet — look up a code and use "Add to Session".</div>`}
       </div>
     </div>`).join('');
 
@@ -985,32 +1023,30 @@ async function renderSessions(){
       document.getElementById('codes-' + el.dataset.toggle).classList.toggle('open');
     });
   });
-  listDiv.querySelectorAll('[data-resume]').forEach(el => {
-    el.addEventListener('click', async () => {
-      activeSessionId = el.dataset.resume;
-      await saveSessions();
-      renderSessions();
-      showToast('Session resumed');
-    });
-  });
   listDiv.querySelectorAll('[data-del]').forEach(el => {
     el.addEventListener('click', async () => {
       const s = sessionsCache.find(x => x.id === el.dataset.del);
-      if(!confirm('Delete session "' + (s ? s.title : '') + '" and its logged codes? This cannot be undone.')) return;
+      if(!confirm('Delete session "' + (s ? s.title : '') + '" and its codes? This cannot be undone.')) return;
       sessionsCache = sessionsCache.filter(x => x.id !== el.dataset.del);
-      if(activeSessionId === el.dataset.del) activeSessionId = null;
       await saveSessions();
       renderSessions();
       showToast('Session deleted');
     });
   });
   listDiv.querySelectorAll('.session-code-row').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      if(e.target.closest('.sc-del')) return;
       const idxs = byCode.get(el.dataset.code) || [];
       const idx = idxs.find(i => DTC_RAW[i][1] === el.dataset.ecu);
       if(idx === undefined){ showToast('Entry not found'); return; }
       document.querySelector('[data-tab="search"]').click();
       showDetail(idx);
+    });
+  });
+  listDiv.querySelectorAll('.sc-del').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeCodeFromSession(el.dataset.rmsid, el.dataset.rmcode, el.dataset.rmecu, parseInt(el.dataset.rmts));
     });
   });
 }
