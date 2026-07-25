@@ -250,6 +250,35 @@ select{min-width:170px;cursor:pointer;}
 .code-row .cr-desc{color:var(--text-dim);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
 .show-more-row{text-align:center;padding:10px;}
 
+/* ---------- Sessions tab ---------- */
+.active-banner{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;
+  padding:12px 16px;margin-bottom:16px;
+}
+.active-banner .ab-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--accent);text-transform:uppercase;}
+.active-banner .ab-title{font-weight:700;font-size:15px;}
+.session-card{
+  background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  padding:14px 16px;margin-bottom:10px;
+}
+.session-card.is-active{border-color:var(--accent);}
+.session-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;cursor:pointer;}
+.session-title{font-weight:700;font-size:15px;}
+.session-meta{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;}
+.session-meta a{color:var(--text-dim);text-decoration:none;border-bottom:1px dotted var(--text-faint);}
+.session-meta a:hover{color:var(--accent);}
+.session-actions{display:flex;gap:8px;flex-shrink:0;}
+.session-codes{margin-top:12px;border-top:1px dashed var(--border);padding-top:10px;display:none;}
+.session-codes.open{display:block;}
+.session-code-row{
+  display:flex;align-items:center;gap:10px;padding:7px 8px;border:1px solid var(--border-soft);
+  border-radius:6px;cursor:pointer;margin-bottom:6px;transition:border-color .15s;
+}
+.session-code-row:hover{border-color:var(--accent);}
+.session-code-row .sc-time{font-family:var(--mono);font-size:10.5px;color:var(--text-faint);margin-left:auto;}
+.session-empty{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);padding:4px 0;}
+
 /* ---------- History tab ---------- */
 .history-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
 .history-toolbar h3{font-family:var(--mono);font-size:12px;color:var(--text-dim);letter-spacing:.06em;margin:0;font-weight:400;}
@@ -319,6 +348,7 @@ select{min-width:170px;cursor:pointer;}
   <div class="tabs">
     <button class="tab-btn active" data-tab="search">SEARCH</button>
     <button class="tab-btn" data-tab="browse">BROWSE BY ECU</button>
+    <button class="tab-btn" data-tab="sessions">SESSIONS</button>
     <button class="tab-btn" data-tab="history">HISTORY</button>
   </div>
 
@@ -357,6 +387,25 @@ select{min-width:170px;cursor:pointer;}
       </div>
       <div class="code-list" id="browseCodeList"></div>
     </div>
+  </div>
+
+  <!-- SESSIONS TAB -->
+  <div class="tab-panel" id="panel-sessions">
+    <div class="search-card">
+      <div class="search-row">
+        <div class="field grow">
+          <label for="sessionTitle">New Session Title</label>
+          <input type="text" id="sessionTitle" placeholder="e.g. Rough idle after fording — front axle" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn" id="createSessionBtn">START SESSION</button>
+        </div>
+      </div>
+      <div class="hint" id="sessionHint">Starting a session records the date, time, and GPS position (you'll be asked for location permission). Codes you look up while a session is active are logged to it automatically.</div>
+    </div>
+    <div id="activeSessionBanner"></div>
+    <div id="sessionsList"></div>
   </div>
 
   <!-- HISTORY TAB -->
@@ -418,6 +467,7 @@ function boot(){
   setupSearch();
   setupBrowse();
   setupHistory();
+  setupSessions();
 
   document.getElementById('loadingScreen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -476,6 +526,7 @@ function setupTabs(){
       btn.classList.add('active');
       document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
       if(btn.dataset.tab === 'history') renderHistory();
+      if(btn.dataset.tab === 'sessions') renderSessions();
     });
   });
 }
@@ -666,6 +717,7 @@ function wireDetailCard(idx, uid){
   });
 
   logHistory(code, ecu);
+  logToActiveSession(code, ecu);
 }
 
 function renderDetailCards(indices, queryLabel){
@@ -788,6 +840,176 @@ async function renderHistory(){
       if(idx === undefined) { showToast('Entry no longer in database'); return; }
       document.querySelector('[data-tab="search"]').click();
       document.getElementById('searchResults').innerHTML = '';
+      showDetail(idx);
+    });
+  });
+}
+
+/* ---------------- sessions ---------------- */
+let sessionsCache = null;
+let activeSessionId = null;
+
+async function loadSessions(){
+  if(sessionsCache === null){
+    sessionsCache = await storageGet('sessions', []);
+    activeSessionId = await storageGet('activeSession', null);
+  }
+}
+async function saveSessions(){
+  await storageSet('sessions', sessionsCache);
+  await storageSet('activeSession', activeSessionId);
+}
+
+function getGPS(){
+  return new Promise((resolve) => {
+    if(!navigator.geolocation){ resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6), acc: Math.round(pos.coords.accuracy)}),
+      () => resolve(null),
+      {enableHighAccuracy: true, timeout: 10000, maximumAge: 60000}
+    );
+  });
+}
+
+function setupSessions(){
+  loadSessions();
+  document.getElementById('createSessionBtn').addEventListener('click', createSession);
+  document.getElementById('sessionTitle').addEventListener('keydown', e => { if(e.key === 'Enter') createSession(); });
+}
+
+async function createSession(){
+  const titleInput = document.getElementById('sessionTitle');
+  const title = titleInput.value.trim();
+  if(!title){ showToast('Give the session a title first'); titleInput.focus(); return; }
+  await loadSessions();
+  const btn = document.getElementById('createSessionBtn');
+  btn.disabled = true; btn.textContent = 'GETTING GPS…';
+  const gps = await getGPS();
+  btn.disabled = false; btn.textContent = 'START SESSION';
+  const sess = {
+    id: 's' + Date.now(),
+    title: title,
+    ts: Date.now(),
+    gps: gps,   /* {lat,lng,acc} or null if denied/unavailable */
+    codes: []
+  };
+  sessionsCache.unshift(sess);
+  activeSessionId = sess.id;
+  await saveSessions();
+  titleInput.value = '';
+  showToast(gps ? 'Session started — GPS captured' : 'Session started — GPS unavailable');
+  renderSessions();
+}
+
+async function logToActiveSession(code, ecu){
+  await loadSessions();
+  if(!activeSessionId) return;
+  const sess = sessionsCache.find(s => s.id === activeSessionId);
+  if(!sess) return;
+  /* avoid consecutive duplicates of the same code+ecu */
+  const last = sess.codes[sess.codes.length - 1];
+  if(last && last.code === code && last.ecu === ecu) return;
+  sess.codes.push({code, ecu, ts: Date.now()});
+  await saveSessions();
+}
+
+async function endActiveSession(){
+  activeSessionId = null;
+  await saveSessions();
+  renderSessions();
+  showToast('Session ended');
+}
+
+function gpsLabel(gps){
+  if(!gps) return 'No GPS';
+  return gps.lat + ', ' + gps.lng + ' (±' + gps.acc + 'm)';
+}
+function gpsLink(gps){
+  return 'https://maps.google.com/?q=' + gps.lat + ',' + gps.lng;
+}
+function fullStamp(ts){
+  const d = new Date(ts);
+  return d.toLocaleDateString([], {year:'numeric', month:'short', day:'numeric'}) + ' ' +
+         d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+
+async function renderSessions(){
+  await loadSessions();
+  const banner = document.getElementById('activeSessionBanner');
+  const active = sessionsCache.find(s => s.id === activeSessionId);
+  banner.innerHTML = active ? `
+    <div class="active-banner">
+      <div>
+        <div class="ab-label">● Active Session</div>
+        <div class="ab-title">${escapeHtml(active.title)}</div>
+      </div>
+      <button class="btn-ghost" id="endSessionBtn">End session</button>
+    </div>` : '';
+  if(active) document.getElementById('endSessionBtn').addEventListener('click', endActiveSession);
+
+  const listDiv = document.getElementById('sessionsList');
+  if(!sessionsCache.length){
+    listDiv.innerHTML = `<div class="empty-state">No sessions yet.<br>Start one above to track an issue.</div>`;
+    return;
+  }
+  listDiv.innerHTML = sessionsCache.map(s => `
+    <div class="session-card ${s.id === activeSessionId ? 'is-active' : ''}" data-sid="${s.id}">
+      <div class="session-head" data-toggle="${s.id}">
+        <div>
+          <div class="session-title">${escapeHtml(s.title)}</div>
+          <div class="session-meta">
+            <span>${fullStamp(s.ts)}</span>
+            <span>${s.gps ? `<a href="${gpsLink(s.gps)}" target="_blank" rel="noopener" data-noexpand>${gpsLabel(s.gps)}</a>` : 'No GPS'}</span>
+            <span>${s.codes.length} code${s.codes.length === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+        <div class="session-actions">
+          ${s.id !== activeSessionId ? `<button class="btn-ghost" data-resume="${s.id}">Resume</button>` : ''}
+          <button class="btn-ghost btn-danger-ghost" data-del="${s.id}">Delete</button>
+        </div>
+      </div>
+      <div class="session-codes" id="codes-${s.id}">
+        ${s.codes.length ? s.codes.map(c => `
+          <div class="session-code-row" data-code="${escapeHtml(c.code)}" data-ecu="${escapeHtml(c.ecu)}">
+            <span class="match-ecu-badge">${escapeHtml(c.ecu)}</span>
+            <span class="cr-code">${escapeHtml(c.code)}</span>
+            <span class="sc-time">${fullStamp(c.ts)}</span>
+          </div>`).join('')
+        : `<div class="session-empty">No codes logged in this session yet — look up a code while it's active.</div>`}
+      </div>
+    </div>`).join('');
+
+  listDiv.querySelectorAll('[data-toggle]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if(e.target.closest('button') || e.target.closest('[data-noexpand]')) return;
+      document.getElementById('codes-' + el.dataset.toggle).classList.toggle('open');
+    });
+  });
+  listDiv.querySelectorAll('[data-resume]').forEach(el => {
+    el.addEventListener('click', async () => {
+      activeSessionId = el.dataset.resume;
+      await saveSessions();
+      renderSessions();
+      showToast('Session resumed');
+    });
+  });
+  listDiv.querySelectorAll('[data-del]').forEach(el => {
+    el.addEventListener('click', async () => {
+      const s = sessionsCache.find(x => x.id === el.dataset.del);
+      if(!confirm('Delete session "' + (s ? s.title : '') + '" and its logged codes? This cannot be undone.')) return;
+      sessionsCache = sessionsCache.filter(x => x.id !== el.dataset.del);
+      if(activeSessionId === el.dataset.del) activeSessionId = null;
+      await saveSessions();
+      renderSessions();
+      showToast('Session deleted');
+    });
+  });
+  listDiv.querySelectorAll('.session-code-row').forEach(el => {
+    el.addEventListener('click', () => {
+      const idxs = byCode.get(el.dataset.code) || [];
+      const idx = idxs.find(i => DTC_RAW[i][1] === el.dataset.ecu);
+      if(idx === undefined){ showToast('Entry not found'); return; }
+      document.querySelector('[data-tab="search"]').click();
       showDetail(idx);
     });
   });
